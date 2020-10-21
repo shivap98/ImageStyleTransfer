@@ -5,8 +5,8 @@ from tensorflow import keras
 import tensorflow.keras.backend as K
 import random
 from scipy.misc import imsave, imresize
-from scipy.optimize import \
-	fmin_l_bfgs_b  # https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.fmin_l_bfgs_b.html
+from scipy.optimize import fmin_l_bfgs_b
+# https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.fmin_l_bfgs_b.html
 from tensorflow.keras.applications import vgg19
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
 import warnings
@@ -55,6 +55,31 @@ def gramMatrix(x):
 	gram = K.dot(features, K.transpose(features))
 	return gram
 
+
+class Evaluator(object):
+
+	def __init__(self, function):
+		self.loss_value = None
+		self.grads_values = None
+		self.fetch_loss_and_grads = function
+
+	def loss(self, x):
+		assert self.loss_value is None
+		x = x.reshape((1, CONTENT_IMG_H, CONTENT_IMG_W, 3))
+		outs = self.fetch_loss_and_grads([x])
+
+		loss_value = outs[0]
+		grad_values = outs[1].flatten().astype('float64')
+		self.loss_value = loss_value
+		self.grad_values = grad_values
+		return self.loss_value
+
+	def grads(self, x):
+		assert self.loss_value is not None
+		grad_values = np.copy(self.grad_values)
+		self.loss_value = None
+		self.grad_values = None
+		return grad_values
 
 # ========================<Loss Function Builder Functions>======================
 
@@ -115,35 +140,60 @@ Save the newly generated and deprocessed images.
 
 def styleTransfer(content, style, test):
 	print("   Building transfer model.")
+
 	contentTensor = K.variable(content)
 	styleTensor = K.variable(style)
 	genTensor = K.placeholder((1, CONTENT_IMG_H, CONTENT_IMG_W, 3))
 	inputTensor = K.concatenate([contentTensor, styleTensor, genTensor], axis=0)
-	model = None  # TODO: implement.
+
+	model = vgg19.VGG19(input_tensor=inputTensor, weights='imagenet', include_top=False)
 	outputDict = dict([(layer.name, layer.output) for layer in model.layers])
+
 	print("   VGG19 model loaded.")
 	loss = 0.0
 	styleLayerNames = ["block1_conv1", "block2_conv1", "block3_conv1", "block4_conv1", "block5_conv1"]
 	contentLayerName = "block5_conv2"
+
 	print("   Calculating content loss.")
 	contentLayer = outputDict[contentLayerName]
 	contentOutput = contentLayer[0, :, :, :]
 	genOutput = contentLayer[2, :, :, :]
-	loss += None  # TODO: implement.
+	loss += CONTENT_WEIGHT * contentLoss(contentOutput, genOutput)
+
 	print("   Calculating style loss.")
 	for layerName in styleLayerNames:
-		loss += None  # TODO: implement.
-	loss += None  # TODO: implement.
-	# TODO: Setup gradients or use K.gradients().
+
+		contentLayer = outputDict[layerName]
+
+		reference_features = contentLayer[1, :, :, :]
+		genOutput = contentLayer[2, :, :, :]
+
+		sloss = styleLoss(reference_features, genOutput)
+		loss += (STYLE_WEIGHT / len(styleLayerNames)) * sloss
+
+	loss += TOTAL_WEIGHT * totalLoss(genTensor)
+
+	grads = K.gradients(loss, genTensor)[0]
+	fetch_loss_and_grads = K.function([genTensor], [loss, grads])
+
+	evaluator = Evaluator(fetch_loss_and_grads)
+
+	result_prefix = CONTENT_IMG_PATH
+	iterations = 10
+	x = test.flatten()
+
 	print("   Beginning transfer.")
-	for i in range(TRANSFER_ROUNDS):
-		print("   Step %d." % i)
-		# TODO: perform gradient descent using fmin_l_bfgs_b.
-		print("      Loss: %f." % tLoss)
-		img = deprocessImage(x)
-		saveFile = None  # TODO: Implement.
-		# imsave(saveFile, img)   #Uncomment when everything is working right.
-		print("      Image saved to \"%s\"." % saveFile)
+	for i in range(iterations):
+
+		x, loss_val, info = fmin_l_bfgs_b(evaluator.loss, x, fprime=evaluator.grads, maxfun=20)
+
+		print("      Loss: %f." % loss_val)
+
+	img = x.copy().reshape((CONTENT_IMG_H, CONTENT_IMG_W, 3))
+	img = deprocessImage(img)
+	fname = result_prefix + '_' + STYLE_IMG_PATH + '_' + "styled.png"
+	imsave(fname, img)
+	print("      Image saved to \"%s\"." % fname)
 	print("   Transfer complete.")
 
 
