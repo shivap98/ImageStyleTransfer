@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -214,4 +215,12 @@ def main():
 
 
 if __name__ == "__main__":
+
+	if len(sys.argv) != 3:
+		print("Usage: python Lab2.py <style_file> <content_file>")
+		exit(1)
+
+	STYLE_IMG_PATH = sys.argv[1]
+	CONTENT_IMG_PATH = sys.argv[2]
+
 	main()
